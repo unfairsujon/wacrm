@@ -190,48 +190,57 @@ export function WhatsAppConfig() {
     embeddedSignupDataRef.current = {};
     setEmbeddedSignupLoading(true);
 
-    window.FB.login(
-      async (response: FacebookLoginResponse) => {
-        const code = response.authResponse?.code;
-        if (!code) {
-          setEmbeddedSignupLoading(false);
-          // User closed the popup without finishing — not an error.
+    // The Facebook SDK's internal invariant checker rejects an async
+    // function passed directly as the login callback ("Expression is
+    // of type asyncfunction, not function") — it wants a plain sync
+    // function. So the callback here stays synchronous and just hands
+    // off to this async helper instead of being async itself.
+    async function onLoginResponse(response: FacebookLoginResponse) {
+      const code = response.authResponse?.code;
+      if (!code) {
+        setEmbeddedSignupLoading(false);
+        // User closed the popup without finishing — not an error.
+        return;
+      }
+      try {
+        const res = await fetch('/api/whatsapp/embedded-signup/exchange-token', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ code }),
+        });
+        const body = await res.json();
+        if (!res.ok) {
+          toast.error(body.error || 'Failed to complete signup with Meta.');
           return;
         }
-        try {
-          const res = await fetch('/api/whatsapp/embedded-signup/exchange-token', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ code }),
-          });
-          const body = await res.json();
-          if (!res.ok) {
-            toast.error(body.error || 'Failed to complete signup with Meta.');
-            return;
-          }
 
-          const { phoneNumberId: psid, wabaId: pwid } = embeddedSignupDataRef.current;
-          if (!psid || !pwid) {
-            toast.error(
-              "Meta didn't send back the phone number details. Please try connecting again.",
-            );
-            return;
-          }
-
-          setPhoneNumberId(psid);
-          setWabaId(pwid);
-          setAccessToken(body.accessToken);
-          setTokenEdited(true);
-          toast.success('Connected via Facebook — saving configuration…');
-          // handleSave reads state via closure; scheduling on the next
-          // tick lets the setState calls above land first.
-          setTimeout(() => handleSave(), 0);
-        } catch (err) {
-          console.error('Embedded signup token exchange failed:', err);
-          toast.error('Failed to complete signup with Meta.');
-        } finally {
-          setEmbeddedSignupLoading(false);
+        const { phoneNumberId: psid, wabaId: pwid } = embeddedSignupDataRef.current;
+        if (!psid || !pwid) {
+          toast.error(
+            "Meta didn't send back the phone number details. Please try connecting again.",
+          );
+          return;
         }
+
+        setPhoneNumberId(psid);
+        setWabaId(pwid);
+        setAccessToken(body.accessToken);
+        setTokenEdited(true);
+        toast.success('Connected via Facebook — saving configuration…');
+        // handleSave reads state via closure; scheduling on the next
+        // tick lets the setState calls above land first.
+        setTimeout(() => handleSave(), 0);
+      } catch (err) {
+        console.error('Embedded signup token exchange failed:', err);
+        toast.error('Failed to complete signup with Meta.');
+      } finally {
+        setEmbeddedSignupLoading(false);
+      }
+    }
+
+    window.FB.login(
+      (response: FacebookLoginResponse) => {
+        void onLoginResponse(response);
       },
       {
         config_id: embeddedSignupConfigId,
